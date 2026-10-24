@@ -29,6 +29,9 @@ build a timed plan from **live weather**, **real places** and **events happening
 | 🇮🇳 | **Hindi / Hinglish** | Replies in the language you write in |
 | 🕘 | **Crowd-aware timing** | Popular sights at opening time or late afternoon |
 | 🎟️ | **Events today** | A 4th agent finds concerts, comedy and fests (allevents.in) and can slot them in as stops |
+| 💡 | **Ideas carousel** | `hi` shows ready-made trips (Royal Jaipur weekend, Goa sunsets, Student day in Delhi, Rain-proof Mumbai…) with **live weather badges**, your saved templates and "Plan again", plus **Create your own** |
+| ⭐ | **Save as template** | Any plan becomes a one-tap template, re-planned with fresh weather each time |
+| 🪄 | **Smart follow-ups** | Context-aware suggestion buttons: *Fit my budget* when over budget, *Rain-proof it* when rain is due, *Add an event* when something's on |
 
 ## Agents
 

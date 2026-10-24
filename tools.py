@@ -32,10 +32,17 @@ def weather_icon(code: int, rain: float) -> str:
     return "☀️" if code <= 1 else "⛅" if code == 2 else "☁️"
 
 
+ALIASES = {"goa": "Panjim", "panaji": "Panjim", "bombay": "Mumbai", "bangalore": "Bengaluru", "calcutta": "Kolkata",
+           "madras": "Chennai", "gurgaon": "Gurugram", "benaras": "Varanasi", "banaras": "Varanasi"}
+
+
 async def geocode(city: str) -> dict | None:
-    r = await http.get("https://geocoding-api.open-meteo.com/v1/search", params={"name": city, "count": 1})
-    results = r.json().get("results")
-    return results[0] if results else None
+    """Best match for a city name, preferring Indian results (DayMate's home market)."""
+    name = ALIASES.get(city.strip().lower(), city)
+    r = await http.get("https://geocoding-api.open-meteo.com/v1/search", params={"name": name, "count": 10})
+    results = r.json().get("results") or []
+    india = [x for x in results if x.get("country_code") == "IN"]
+    return max(india, key=lambda x: x.get("population") or 0) if india else (results[0] if results else None)
 
 
 async def fetch_weather(lat: float, lon: float, start: str, days: int) -> dict:
@@ -98,6 +105,8 @@ async def fetch_places(city: str, lat: float, lon: float, categories: list[str],
 async def fetch_events(city: str, days: list[str]) -> list[dict]:
     """Public events from allevents.in city pages (schema.org JSON-LD)."""
     r = await http.get(f"https://allevents.in/{quote(city.lower().replace(' ', '-'))}/all")
+    if r.status_code == 404:
+        return []  # no listings page for this city
     r.raise_for_status()
     events = []
     for block in re.findall(r'<script type="application/ld\+json">(.*?)</script>', r.text, re.S):
@@ -130,6 +139,23 @@ async def route_legs(points: list[tuple[float, float]]) -> list[dict]:
                 for leg in r.json()["routes"][0]["legs"]]
     except (httpx.HTTPError, KeyError, IndexError):
         return []
+
+
+_images: dict[str, str] = {}
+
+
+async def wiki_image(*titles: str) -> str:
+    """Thumbnail of the first Wikipedia page that has one (cached); '' if none."""
+    for t in titles:
+        if t not in _images:
+            try:
+                r = await http.get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(t.replace(' ', '_'))}")
+                _images[t] = ((r.json().get("thumbnail") or {}).get("source") or "") if r.status_code == 200 else ""
+            except (httpx.HTTPError, ValueError):
+                _images[t] = ""
+        if _images[t]:
+            return _images[t]
+    return ""
 
 
 # ---------- action links ----------

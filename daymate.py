@@ -298,13 +298,20 @@ async def render(state: dict, note: str = "") -> tuple[str, dict]:
         md.append("🎟️ Also on: " + " · ".join(f"[{short(e['name'], 40)}]({e['url']})" for e in extra))
     if plan.get("tips"):
         md.append(f"🎒 {short(plan['tips'], 160)}")
-    md += ["", "_Tap **Swap** on any stop in the card, or just type what to change._"]
+    tweaks = follow_ups(state)
+    md += ["", "💡 **Try:** " + " · ".join(f"*{label}*" for label, _ in tweaks)
+           + " — or tap **Swap** on a stop, **⭐ Save** it as a template, or type any change."]
 
-    buttons = [{"type": "button", "label": "🌧️ Rain alerts", "primary": True, "action": {"selection": {"action": "watch"}}}]
+    suggest = [{"type": "button", "label": label, "action": {"selection": {"action": "tweak", "text": text}}}
+               for label, text in tweaks]
+    buttons = [{"type": "button", "label": "⭐ Save as template", "primary": True, "action": {"selection": {"action": "save"}}},
+               {"type": "button", "label": "🌧️ Rain alerts", "action": {"selection": {"action": "watch"}}}]
     if intent["days"] == 1:
         buttons.append({"type": "button", "label": "➕ Make it 3 days", "action": {"selection": {"action": "pro"}}})
     buttons.append({"type": "button", "label": "✨ New plan", "action": {"selection": {"action": "new"}}})
-    card_children += [{"type": "divider"}, {"type": "group", "direction": "row", "gap": 8, "children": buttons}]
+    card_children += [{"type": "divider"}, {"type": "text", "value": "💡 Suggestions", "style": "emphasis"},
+                      {"type": "group", "direction": "row", "gap": 8, "children": suggest},
+                      {"type": "group", "direction": "row", "gap": 8, "children": buttons}]
     card = {"root": {"type": "section", "title": plan["title"],
                      "subtitle": f"{geo['name']} · {when} · ~{rupees(per_person)}/person", "children": card_children}}
     return "\n".join(md), card
@@ -347,6 +354,118 @@ def intent_from_form(sel: dict) -> dict:
         "city": str(sel.get("city") or "").strip() or None, "day": sel.get("day"), "days": sel.get("days") or 1,
         "group_size": sel.get("group_size") or 1, "budget_pp": sel.get("budget_pp"),
         "interests": picked or ["heritage", "street_food", "museum"], "lang": "English", "notes": ""})
+
+
+# ---------- suggestions: ready-made templates, saved trips, follow-ups ----------
+
+TEMPLATES = [
+    {"id": "jaipur-royal", "title": "🏰 Royal Jaipur weekend", "city": "Jaipur", "lat": 26.91962, "lon": 75.78781,
+     "days": 2, "weekend": True, "budget_pp": 1500, "interests": ["heritage", "museum", "street_food", "market"],
+     "blurb": "Forts, palaces, bazaars & street food", "image": ("Hawa Mahal",)},
+    {"id": "goa-chill", "title": "🏖️ Goa sunsets & cafes", "city": "Calangute", "lat": 15.5439, "lon": 73.7553,
+     "days": 1, "weekend": True, "budget_pp": 2000, "interests": ["viewpoint", "cafe", "nightlife", "restaurant"],
+     "blurb": "Sunset points, cafe-hopping and nightlife", "image": ("Calangute", "Goa")},
+    {"id": "delhi-student", "title": "🎒 Student day in Delhi", "city": "New Delhi", "lat": 28.63576, "lon": 77.22445,
+     "days": 1, "weekend": False, "budget_pp": 600, "interests": ["monument", "street_food", "market", "park"],
+     "blurb": "Monuments, chaat and markets on a small budget", "image": ("India Gate",)},
+    {"id": "mumbai-indoor", "title": "☔ Rain-proof Mumbai", "city": "Mumbai", "lat": 19.07283, "lon": 72.88261,
+     "days": 1, "weekend": False, "budget_pp": 1500, "interests": ["museum", "mall", "cafe", "restaurant"],
+     "blurb": "Museums, cafes and malls – no getting wet", "image": ("Gateway of India",)},
+    {"id": "varanasi-soul", "title": "🛕 Soulful Varanasi", "city": "Varanasi", "lat": 25.31668, "lon": 82.97391,
+     "days": 1, "weekend": False, "budget_pp": 1000, "interests": ["temple", "heritage", "street_food", "viewpoint"],
+     "blurb": "Ghats, temples and the evening aarti", "image": ("Dashashwamedh Ghat",)},
+    {"id": "blr-nights", "title": "🌙 Bengaluru cafes & nights", "city": "Bengaluru", "lat": 12.97194, "lon": 77.59369,
+     "days": 1, "weekend": True, "budget_pp": 2000, "interests": ["cafe", "park", "nightlife", "restaurant"],
+     "blurb": "Parks, cafe-hopping and craft beer", "image": ("Cubbon Park",)},
+]
+
+
+def upcoming_weekend() -> str:
+    t = date.today()
+    return (t if t.weekday() >= 5 else t + timedelta(days=5 - t.weekday())).isoformat()
+
+
+def template_intent(t: dict) -> dict:
+    return normalize_intent({"city": t["city"], "day": upcoming_weekend() if t["weekend"] else date.today().isoformat(),
+                             "days": t["days"], "interests": list(t["interests"]), "group_size": 1,
+                             "budget_pp": t["budget_pp"], "lang": "English", "notes": t["blurb"]})
+
+
+async def live_badge(t: dict) -> dict | None:
+    try:
+        w = (await tools.fetch_weather(t["lat"], t["lon"], date.today().isoformat(), 1))["daily"]
+        d = next(iter(w.values()))
+        rainy = d["rain"] >= 50
+        return {"label": f"{tools.weather_icon(d['code'], d['rain'])} {d['max']:.0f}° today" + (" · rain" if rainy else ""),
+                "variant": "warning" if rainy else "info"}
+    except Exception:
+        return None
+
+
+def describe(intent: dict) -> str:
+    likes = ", ".join(i.replace("_", " ") for i in intent["interests"][:3])
+    return f"{intent['city']} · {intent['days']} day{'s' if intent['days'] > 1 else ''} · {likes}"
+
+
+async def welcome(ctx: Context, sender: str) -> tuple[str, dict, list[dict]]:
+    """Carousel of personal + ready-made trip ideas with live weather. Returns (text, card, menu actions)."""
+    saved = ctx.storage.get(f"tpl:{sender}") or []
+    last = (ctx.storage.get(sender) or {}).get("intent")
+    entries = []  # (item, action)
+    for i in reversed(range(len(saved))):
+        s = saved[i]
+        entries.append(({"title": f"⭐ {s['name']}", "subtitle": describe(s["intent"]),
+                         "badges": [{"label": "Your template", "variant": "success"}],
+                         "image": await tools.wiki_image(s["intent"]["city"])}, {"action": "template", "saved": i}))
+    if last and all(s["intent"]["city"] != last["city"] for s in saved):
+        entries.append(({"title": f"🔁 {last['city']} again", "subtitle": describe(last),
+                         "badges": [{"label": "Recent", "variant": "info"}],
+                         "image": await tools.wiki_image(last["city"])}, {"action": "again"}))
+    badges = await asyncio.gather(*(live_badge(t) for t in TEMPLATES))
+    images = await asyncio.gather(*(tools.wiki_image(*t["image"], t["city"]) for t in TEMPLATES))
+    for t, badge, img in zip(TEMPLATES, badges, images):
+        tags = [b for b in (badge, {"label": "Pro", "variant": "warning"} if t["days"] > 1 else None) if b]
+        entries.append(({"title": t["title"], "subtitle": f"{t['blurb']} · {t['days']} day{'s' if t['days'] > 1 else ''}",
+                         "badges": tags, "secondary_text": f"~₹{t['budget_pp']:,}/person/day", "image": img},
+                        {"action": "template", "id": t["id"]}))
+    entries.append(({"title": "✨ Create your own", "subtitle": "Pick any city, dates, budget and interests",
+                     "badges": [{"label": "Custom", "variant": "info"}], "image": await tools.wiki_image("Taj Mahal")},
+                    {"action": "custom"}))
+    fallback = await tools.wiki_image("Taj Mahal", "India")
+    items = []
+    for k, (item, action) in enumerate(entries, 1):
+        item = {k_: v for k_, v in {**item, "image": item.get("image") or fallback}.items() if v}
+        items.append({"id": f"idea{k}", **item,
+                      "primary_cta": {"label": "Create" if action["action"] == "custom" else "Plan this", "selection": action}})
+    lines = "\n".join(f"{k}. {item['title']} – {item.get('subtitle', '')}" for k, (item, _) in enumerate(entries, 1))
+    text = ("Hi, I'm **DayMate** 👋 Here are some ideas for you – tap one to plan it, or create your own.\n\n"
+            f"{lines}\n\n_Reply with a number, or just type a trip like *\"Saturday in Udaipur, lakes and cafes\"*._")
+    card = {"title": "Ideas for you", "subtitle": f"Live weather · {date.today():%a %d %b}", "items": items}
+    return text, card, [a for _, a in entries]
+
+
+def follow_ups(state: dict) -> list[tuple[str, str]]:
+    """Context-aware tweaks for the current plan: (button label, instruction)."""
+    plan, intent = state["plan"], state["intent"]
+    per_person = sum(s["cost_inr"] for d in plan["days"] for s in d["stops"])
+    hourly = (state.get("weather") or {}).get("hourly") or {}
+    rainy = any((hourly.get(f"{d['date']}T{s['start'][:2]}:00") or [0, 0, 0])[1] >= 40 and not s.get("indoor")
+                for d in plan["days"] for s in d["stops"])
+    used = {s["id"] for d in plan["days"] for s in d["stops"]}
+    event = next((e for e in state["catalogue"] if e["id"].startswith("e") and e["id"] not in used), None)
+    out = []
+    if intent.get("budget_pp") and per_person > intent["budget_pp"] * intent["days"]:
+        out.append(("💸 Fit my budget", "make it cheaper so it fits my budget"))
+    elif per_person > 1200 * intent["days"]:
+        out.append(("💸 Cheaper version", "make it cheaper, more free and low-cost stops"))
+    if rainy:
+        out.append(("☔ Rain-proof it", "rain is likely, move outdoor stops indoors"))
+    if event:
+        out.append(("🎟️ Add an event", f"add the event '{event['name']}' to the plan"))
+    out += [("🐢 Slower pace", "slower pace with fewer stops and longer breaks"),
+            ("🍽️ More food", "add more food stops, local specialities"),
+            ("👨‍👩‍👧 Family-friendly", "make it family-friendly with kids")]
+    return out[:3]
 
 
 def message(text: str, card_kind: str | None = None, payload: dict | None = None) -> ChatMessage:
@@ -613,18 +732,36 @@ async def on_chat(ctx: Context, sender: str, msg: ChatMessage):
         return
     sel = extract_json(text) if text.startswith("{") else {}  # card selections arrive as JSON on direct chats
     low = text.lower()
-    action = sel.get("action") or ("swap" if re.search(r"\b(swap|replace)\b", low) else
-                                   "watch" if re.search(r"\b(watch|alert|notify)\b", low) else
-                                   "new" if low.strip("!. ") in GREETINGS else None)
+    menu = ctx.storage.get(f"menu:{sender}") or []
+    if not sel:  # planner-mediated selections arrive as prose; map them back to actions
+        tpl = next((t for t in TEMPLATES if t["id"] in low or t["title"][2:].strip().lower() in low), None)
+        if low.strip(". ").isdigit() and 1 <= int(low.strip(". ")) <= len(menu):
+            sel = menu[int(low.strip(". ")) - 1]
+        elif re.search(r"\b(swap|replace)\b", low):
+            sel = {"action": "swap"}
+        elif re.search(r"\bsave\b.*\b(template|plan|trip|this|it)\b|^save\W*$", low):
+            sel = {"action": "save"}
+        elif re.search(r"\b(watch|alert|notify)\b", low):
+            sel = {"action": "watch"}
+        elif re.search(r"create your own|\bcustom\b", low):
+            sel = {"action": "custom"}
+        elif tpl:
+            sel = {"action": "template", "id": tpl["id"]}
+        elif re.search(r"\b(again|same trip|repeat)\b", low) and len(low) < 40:
+            sel = {"action": "again"}
+        elif low.strip("!. ") in GREETINGS:
+            sel = {"action": "new"}
+    action = sel.get("action")
     state = ctx.storage.get(sender) or {}
     try:
-        if action == "new":
-            await ctx.send(sender, message("Hi, I'm **DayMate** 👋 Pick a few things below, or just type something like "
-                                           "*\"Saturday in Jaipur, forts and street food\"*.",
-                                           "custom", form_card()))
+        if action == "new" or (action in ("swap", "watch", "save", "again", "tweak") and not state):
+            text_, card, actions = await welcome(ctx, sender)
+            ctx.storage.set(f"menu:{sender}", actions)
+            await ctx.send(sender, message(text_, "carousel", card))
             return
-        if action in ("swap", "watch") and not state:
-            await ctx.send(sender, message("Let's make a plan first!", "custom", form_card()))
+        if action == "custom":
+            await ctx.send(sender, message("Let's build your own 🛠️ Fill in what matters, I'll handle the rest:",
+                                           "custom", form_card()))
             return
         if action == "swap":
             await do_swap(ctx, sender, state, sel, text)
@@ -632,15 +769,34 @@ async def on_chat(ctx: Context, sender: str, msg: ChatMessage):
         if action == "watch":
             await do_watch(ctx, sender, state)
             return
+        if action == "save":
+            saved = [s for s in ctx.storage.get(f"tpl:{sender}") or [] if s["name"] != state["plan"]["title"]]
+            saved = (saved + [{"name": state["plan"]["title"], "intent": state["intent"]}])[-6:]
+            ctx.storage.set(f"tpl:{sender}", saved)
+            await ctx.send(sender, message(f"⭐ Saved **{state['plan']['title']}** as a template. Say **hi** any time "
+                                           "and it'll be first in your ideas, re-planned with fresh weather."))
+            return
         if action == "plan":
             intent = intent_from_form(sel)
+        elif action == "template":
+            saved = ctx.storage.get(f"tpl:{sender}") or []
+            if "saved" in sel and str(sel["saved"]).isdigit() and int(sel["saved"]) < len(saved):
+                intent = normalize_intent({**saved[int(sel["saved"])]["intent"], "day": date.today().isoformat()})
+            else:
+                intent = template_intent(next((t for t in TEMPLATES if t["id"] == sel.get("id")), TEMPLATES[0]))
+        elif action == "again":
+            intent = normalize_intent({**state["intent"], "day": date.today().isoformat()})
         elif action == "pro" and state:
             intent = {**state["intent"], "days": 3}
+        elif action == "tweak":
+            intent = await parse_intent(str(sel.get("text") or text), state["intent"])
         else:
             intent = await parse_intent(text, state.get("intent"))
         if not intent.get("city"):
-            await ctx.send(sender, message("Which city should I plan for? e.g. *Plan Saturday in Jaipur, I love forts "
-                                           "and street food* – or fill this in:", "custom", form_card()))
+            text_, card, actions = await welcome(ctx, sender)
+            ctx.storage.set(f"menu:{sender}", actions)
+            await ctx.send(sender, message("Which city should I plan for? " + text_.split("\n", 1)[1].lstrip(),
+                                           "carousel", card))
             return
         await plan_or_charge(ctx, sender, intent)
     except Exception:
