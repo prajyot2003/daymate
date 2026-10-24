@@ -172,8 +172,8 @@ async def compose_plan(intent: dict, geo: dict, weather: dict | None, catalogue:
         "at opening time or late afternoon and mention it. Respect opening hours. Group nearby stops using lat/lon "
         "and leave 15-40 minutes between stops for travel. An event (id starting with 'e') may be a stop at its "
         "start time if it suits the interests. cost_inr = realistic per-person cost (entry + food) in "
-        f"{geo['name']}; keep the day within budget_pp if given. 'why' is one short line. summary = 1-2 sentences "
-        f"on the weather and strategy. tips = what to pack/know. Write title, summary, why and tips in {intent['lang']}."
+        f"{geo['name']}; keep the day within budget_pp if given. 'why' is at most 12 words. summary = one sentence "
+        f"on the weather and strategy. tips = one sentence on what to pack/know. title = max 6 words with one emoji. Write title, summary, why and tips in {intent['lang']}."
     )
     compact = [{k: (round(v, 4) if isinstance(v, float) else v) for k, v in c.items() if k != "url"} for c in catalogue]
     user = (f"Request: {json.dumps(intent)}\nLocation: {geo['name']}, {geo.get('country', '')}\n"
@@ -212,109 +212,141 @@ def numbered(state: dict) -> list[tuple[int, dict, dict]]:
     return out
 
 
-def stop_weather(state: dict, day: str, start: str) -> str:
+def stop_weather(state: dict, day: str, start: str) -> tuple[str, bool]:
+    """('☀️ 25°', rainy?) for the hour a stop starts."""
     v = ((state.get("weather") or {}).get("hourly") or {}).get(f"{day}T{start[:2]}:00")
     if not v:
-        return ""
-    return f"{tools.weather_icon(int(v[2]), v[1])} {round(v[0])}°C" + (f", {v[1]}% rain" if v[1] >= 30 else "")
+        return "", False
+    rainy = v[1] >= 40 or int(v[2]) >= 51
+    return f"{tools.weather_icon(int(v[2]), v[1])} {round(v[0])}°" + (f" · {v[1]:.0f}% rain" if rainy else ""), rainy
+
+
+def short(text: str, limit: int = 80) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= limit else text[:limit - 1].rsplit(" ", 1)[0] + "…"
+
+
+def rupees(n: int) -> str:
+    return f"₹{n:,}"
 
 
 async def render(state: dict, note: str = "") -> tuple[str, dict]:
+    """Compact chat summary (one line per stop + one action row per day) and a detailed itinerary card."""
     plan, intent, geo = state["plan"], state["intent"], state["geo"]
     cat = {c["id"]: c for c in state["catalogue"]}
     tz = geo.get("timezone", "Asia/Kolkata")
+    daily = (state.get("weather") or {}).get("daily") or {}
     legs_by_day = await asyncio.gather(*(tools.route_legs([(cat[s["id"]]["lat"], cat[s["id"]]["lon"]) for s in d["stops"]])
                                          for d in plan["days"]))
-    md = [f"## {plan['title']}", plan["summary"]]
+    per_person = sum(s["cost_inr"] for d in plan["days"] for s in d["stops"])
+    stops_total = sum(len(d["stops"]) for d in plan["days"])
+    first = date.fromisoformat(plan["days"][0]["date"])
+    when = f"{first:%a %d %b}" + (f" + {len(plan['days']) - 1} more day(s)" if len(plan["days"]) > 1 else "")
+
+    md = []
     if note:
-        md.append(f"> {note}")
-    items_by_day, n, per_person = [], 0, 0
-    for d, legs in zip(plan["days"], legs_by_day):
-        w = ((state.get("weather") or {}).get("daily") or {}).get(d["date"])
-        head = f"Day {len(items_by_day) + 1} · {date.fromisoformat(d['date']):%a %d %b}"
-        md.append(f"### {head}" + (f" · {w['min']:.0f}–{w['max']:.0f}°C · rain {w['rain']}%" if w else ""))
-        items, prev = [], None
+        md += [note, ""]
+    md += [f"### {plan['title']}", f"{when} · {stops_total} stops · ~{rupees(per_person)}/person", "",
+           short(plan["summary"], 200), ""]
+    card_children, n = [], 0
+    for di, (d, legs) in enumerate(zip(plan["days"], legs_by_day), 1):
+        w = daily.get(d["date"])
+        wline = f" · {tools.weather_icon(w['code'], w['rain'])} {w['min']:.0f}–{w['max']:.0f}°" if w else ""
+        head = f"Day {di} · {date.fromisoformat(d['date']):%a %d %b}{wline}"
+        if len(plan["days"]) > 1:
+            md.append(f"**{head}**")
+        items = []
         for i, s in enumerate(d["stops"]):
             n += 1
             p = cat[s["id"]]
-            per_person += s["cost_inr"]
-            wx = stop_weather(state, d["date"], s["start"])
-            cal = tools.calendar_link(p["name"], d["date"], s["start"], s["end"], tz,
-                                      f"{p['name']}, {geo['name']}", s.get("why", ""))
-            cost = f" · ~₹{s['cost_inr']}" if s["cost_inr"] else " · free"
-            md.append(f"**{n}. {s['start']}–{s['end']} · [{p['name']}]({tools.maps_link(p)})**"
-                      + (f" · {wx}" if wx else "") + cost)
-            md.append(f"{s.get('why', '')}" + (f" 🎟️ [Event page]({p['url']})" if p.get("url") else ""))
-            md.append(f"📅 [Add to calendar]({cal}) · 🚕 [Ride here]({tools.ride_link(prev, p)})")
-            if i < len(legs):
-                md.append("↓ _short walk_" if legs[i]["km"] < 0.6 else f"↓ _{legs[i]['min']} min drive · {legs[i]['km']} km_")
-            md.append("")
-            badges = [{"type": "badge", "label": wx, "variant": "warning" if "🌧" in wx or "⛈" in wx else "info"}] if wx else []
+            wx, rainy = stop_weather(state, d["date"], s["start"])
+            md.append(f"`{s['start']}` **{p['name']}** – {short(s.get('why'), 70)} [📍]({tools.maps_link(p)})"
+                      + (f" [🎟️]({p['url']})" if p.get("url") else ""))
+            leg = legs[i] if i < len(legs) else None
+            badges = [b for b in (
+                {"type": "badge", "label": wx, "variant": "warning" if rainy else "info"} if wx else None,
+                {"type": "badge", "label": f"~{rupees(s['cost_inr'])}" if s["cost_inr"] else "Free", "variant": "success"},
+                {"type": "badge", "label": "🚶 walk next" if leg["km"] < 0.6 else f"🚗 {leg['min']} min next", "variant": "info"}
+                if leg else None,
+            ) if b]
             items.append({"children": [
-                {"type": "text", "value": f"{n} · {s['start']}–{s['end']}" + cost, "style": "muted"},
-                {"type": "heading", "value": p["name"], "level": 3},
-                {"type": "text", "value": s.get("why", "")},
-                *badges,
-                {"type": "button", "label": "🔁 Swap", "action": {"selection": {"action": "swap", "stop": n}}},
+                {"type": "group", "direction": "row", "gap": 8, "children": [
+                    {"type": "text", "value": f"{s['start']}–{s['end']}", "style": "emphasis"},
+                    {"type": "heading", "value": f"{n}. {p['name']}", "level": 3}]},
+                {"type": "text", "value": short(s.get("why"), 110), "style": "muted"},
+                {"type": "group", "direction": "row", "gap": 6, "children": [
+                    *badges, {"type": "button", "label": "🔁 Swap", "action": {"selection": {"action": "swap", "stop": n}}}]},
             ]})
-            prev = p
-        md.append(f"🧭 **[Start navigation – all {head.split(' ·')[0]} stops]({tools.route_link([cat[s['id']] for s in d['stops']])})**\n")
-        items_by_day.append((head, items))
+        stops = [cat[s["id"]] for s in d["stops"]]
+        day_cal = tools.calendar_link(
+            f"DayMate: {plan['title']}" + (f" (Day {di})" if len(plan["days"]) > 1 else ""), d["date"],
+            d["stops"][0]["start"], d["stops"][-1]["end"], tz, geo["name"],
+            "\n".join(f"{s['start']} {cat[s['id']]['name']} – {tools.maps_link(cat[s['id']])}" for s in d["stops"]))
+        md += ["", f"🧭 [Navigate]({tools.route_link(stops)}) · 📅 [Add to calendar]({day_cal}) · "
+                   f"🚕 [Cab to first stop]({tools.ride_link(None, stops[0])})", ""]
+        card_children += [{"type": "heading", "value": head, "level": 3}, {"type": "list", "items": items}]
 
     group = intent["group_size"]
-    budget = f"💰 **Budget:** ~₹{per_person} per person" + (" for the whole trip" if intent["days"] > 1 else "")
-    if group > 1:
-        budget += f" · ₹{per_person * group} total for {group} people (₹{per_person} each)"
+    money = f"💰 ~{rupees(per_person)} per person" + (f" · {rupees(per_person * group)} for {group}" if group > 1 else "")
     if intent.get("budget_pp"):
         cap = intent["budget_pp"] * intent["days"]
-        budget += f" · {'✅ within' if per_person <= cap else f'⚠️ ₹{per_person - cap} over'} your ₹{cap} budget"
-    md.append(budget)
+        money += " · ✅ within budget" if per_person <= cap else f" · ⚠️ {rupees(per_person - cap)} over budget"
+    md.append(money)
     used = {s["id"] for d in plan["days"] for s in d["stops"]}
-    extra = [e for e in state["catalogue"] if e["id"].startswith("e") and e["id"] not in used][:3]
+    extra = [e for e in state["catalogue"] if e["id"].startswith("e") and e["id"] not in used][:2]
     if extra:
-        md.append("🎟️ **Also happening:** " + " · ".join(f"[{e['name']}]({e['url']}) ({e['starts'][:16].replace('T', ' ')})" for e in extra))
+        md.append("🎟️ Also on: " + " · ".join(f"[{short(e['name'], 40)}]({e['url']})" for e in extra))
     if plan.get("tips"):
-        md.append(f"🎒 **Tips:** {plan['tips']}")
-    md.append("\n_Reply **swap 3** (or *replace the museum with a market*) to change a stop · **watch** for rain alerts"
-              + (" · **make it 3 days** for DayMate Pro_" if intent["days"] == 1 else "_"))
+        md.append(f"🎒 {short(plan['tips'], 160)}")
+    md += ["", "_Tap **Swap** on any stop in the card, or just type what to change._"]
 
-    children = []
-    for head, items in items_by_day:
-        children += [{"type": "heading", "value": head, "level": 3}, {"type": "list", "items": items}]
-    buttons = [{"type": "button", "label": "🌧️ Watch for rain", "primary": True, "action": {"selection": {"action": "watch"}}}]
+    buttons = [{"type": "button", "label": "🌧️ Rain alerts", "primary": True, "action": {"selection": {"action": "watch"}}}]
     if intent["days"] == 1:
-        buttons.append({"type": "button", "label": "🗓️ Make it 3 days (Pro)", "action": {"selection": {"action": "pro"}}})
+        buttons.append({"type": "button", "label": "➕ Make it 3 days", "action": {"selection": {"action": "pro"}}})
     buttons.append({"type": "button", "label": "✨ New plan", "action": {"selection": {"action": "new"}}})
-    children += [{"type": "divider"}, {"type": "group", "direction": "row", "gap": 8, "children": buttons}]
+    card_children += [{"type": "divider"}, {"type": "group", "direction": "row", "gap": 8, "children": buttons}]
     card = {"root": {"type": "section", "title": plan["title"],
-                     "subtitle": f"{geo['name']} · {len(plan['days'])} day(s) · ~₹{per_person}/person",
-                     "children": children}}
+                     "subtitle": f"{geo['name']} · {when} · ~{rupees(per_person)}/person", "children": card_children}}
     return "\n".join(md), card
 
 
+BUDGETS = [("700", "💸 Budget (~₹700/day)"), ("1500", "⚖️ Comfort (~₹1,500/day)"), ("4000", "✨ Splurge (~₹4,000/day)")]
+GROUPS = [("1", "Just me"), ("2", "2 people"), ("4", "3–4 people"), ("6", "5+ people")]
+TILES = {"heritage": "🏰", "museum": "🖼️", "street_food": "🍢", "cafe": "☕", "market": "🛍️",
+         "park": "🌳", "temple": "🛕", "nightlife": "🌙"}
+
+
 def form_card() -> dict:
+    """Tap-to-pick planner: one text box, four dropdowns and interest tiles."""
     today = date.today()
     days = [today + timedelta(days=i) for i in range(7)]
-    return {"title": "Plan my day with DayMate", "fields": [
-        {"name": "city", "kind": "text", "label": "City", "required": True},
-        {"name": "day", "kind": "select", "label": "Start date", "options": [
-            {"value": d.isoformat(), "label": f"{d:%a %d %b}" + (" (today)" if i == 0 else "")} for i, d in enumerate(days)]},
-        {"name": "days", "kind": "select", "label": "Trip length", "options": [
-            {"value": "1", "label": "1 day · free"}, {"value": "2", "label": "2 days · Pro"},
-            {"value": "3", "label": "3 days · Pro"}]},
-        {"name": "group_size", "kind": "number", "label": "People"},
-        {"name": "budget_pp", "kind": "number", "label": "Budget per person per day (₹, optional)"},
-        *[{"name": f"like_{c}", "kind": "checkbox", "label": label} for c, label in FORM_INTERESTS],
-    ], "submit_cta": {"label": "Plan it", "selection": {"action": "plan"}}}
+    day_label = lambda i, d: "Today" if i == 0 else "Tomorrow" if i == 1 else f"{d:%a %d %b}"
+    select = lambda name, label, opts: {"type": "input", "name": name, "kind": "select", "label": label,
+                                        "options": [{"value": v, "label": l} for v, l in opts]}
+    return {"root": {"type": "section", "title": "Where to? 🌍", "subtitle": "Pick a few things – I'll plan the rest", "children": [
+        {"type": "input", "name": "city", "kind": "text", "label": "City", "required": True, "placeholder": "e.g. Jaipur"},
+        {"type": "group", "direction": "row", "gap": 8, "children": [
+            select("day", "When", [(d.isoformat(), day_label(i, d)) for i, d in enumerate(days)]),
+            select("days", "How long", [("1", "1 day"), ("2", "2 days · Pro"), ("3", "3 days · Pro")])]},
+        {"type": "group", "direction": "row", "gap": 8, "children": [
+            select("group_size", "Who", GROUPS), select("budget_pp", "Budget per person", BUDGETS)]},
+        {"type": "text", "value": "What do you enjoy? (pick any)", "style": "emphasis"},
+        {"type": "choice_grid", "name": "interests", "multi": True,
+         "choices": [{"value": c, "label": f"{TILES[c]} {label}"} for c, label in FORM_INTERESTS]},
+        {"type": "button", "label": "✨ Plan my day", "primary": True, "action": {"selection": {"action": "plan"}}},
+    ]}}
 
 
 def intent_from_form(sel: dict) -> dict:
+    picked = sel.get("interests") or []
+    if isinstance(picked, str):
+        picked = re.split(r"[,\s]+", picked)
     truthy = {True, "true", "on", "1", 1, "yes"}
+    picked = [c for c in picked if c in CATEGORIES] + [c for c, _ in FORM_INTERESTS if sel.get(f"like_{c}") in truthy]
     return normalize_intent({
         "city": str(sel.get("city") or "").strip() or None, "day": sel.get("day"), "days": sel.get("days") or 1,
         "group_size": sel.get("group_size") or 1, "budget_pp": sel.get("budget_pp"),
-        "interests": [c for c, _ in FORM_INTERESTS if sel.get(f"like_{c}") in truthy] or ["heritage", "street_food", "museum"],
-        "lang": "English", "notes": ""})
+        "interests": picked or ["heritage", "street_food", "museum"], "lang": "English", "notes": ""})
 
 
 def message(text: str, card_kind: str | None = None, payload: dict | None = None) -> ChatMessage:
@@ -587,11 +619,12 @@ async def on_chat(ctx: Context, sender: str, msg: ChatMessage):
     state = ctx.storage.get(sender) or {}
     try:
         if action == "new":
-            await ctx.send(sender, message("Hi! I'm **DayMate** 👋 Tell me a city and what you enjoy, or fill this in:",
-                                           "form", form_card()))
+            await ctx.send(sender, message("Hi, I'm **DayMate** 👋 Pick a few things below, or just type something like "
+                                           "*\"Saturday in Jaipur, forts and street food\"*.",
+                                           "custom", form_card()))
             return
         if action in ("swap", "watch") and not state:
-            await ctx.send(sender, message("Let's make a plan first!", "form", form_card()))
+            await ctx.send(sender, message("Let's make a plan first!", "custom", form_card()))
             return
         if action == "swap":
             await do_swap(ctx, sender, state, sel, text)
@@ -607,7 +640,7 @@ async def on_chat(ctx: Context, sender: str, msg: ChatMessage):
             intent = await parse_intent(text, state.get("intent"))
         if not intent.get("city"):
             await ctx.send(sender, message("Which city should I plan for? e.g. *Plan Saturday in Jaipur, I love forts "
-                                           "and street food* – or fill this in:", "form", form_card()))
+                                           "and street food* – or fill this in:", "custom", form_card()))
             return
         await plan_or_charge(ctx, sender, intent)
     except Exception:
