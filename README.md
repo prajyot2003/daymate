@@ -35,12 +35,18 @@ build a timed plan from **live weather**, **real places** and **events happening
 
 ## Agents
 
-| Agent | Role | Address |
+All four agents run as **Agentverse hosted agents** (code in [`hosted/`](hosted)), so DayMate is online 24/7.
+
+| Agent | Role | Hosted address |
 |---|---|---|
-| `daymate` (orchestrator) | Chat + Payment Protocol, ASI:One entry point. ASI1 parses intent and writes the plan as structured JSON; the orchestrator builds links, travel times, budget and cards | `agent1q27u5s2hueg8u7ecza8p05ce25frp2jnwchh44f0qepscah29ft96262zge` |
-| `daymate-weather` | Hourly multi-day forecast (Open-Meteo) | `agent1q09f447uf8l648cltdqlzd2785mfd9ensc48mwt8twz3jnfc7pwj5z3zkgw` |
-| `daymate-places` | Real places and opening hours (OpenStreetMap / Nominatim) | `agent1qggv7mx7a5dcpllc5lz0nfwtgatzf7f7k2f25f4gc87sg322vp94wwjgray` |
-| `daymate-events` | Events on your dates (allevents.in) | `agent1qtd6dh08q5dy3s58hjzru53u9tm3h4r2fep7fnyq480xrwrquaye5lhg78x` |
+| `DayMate` (orchestrator) | Chat + Payment Protocol, ASI:One entry point. ASI1 parses intent and writes the plan as structured JSON; the orchestrator builds links, travel times, budget and cards | `agent1qt0zkdfw7uv7atn6p4gyqhgjp6tltssnvee8fyu2smsj9xc4yjyq55eqpra` |
+| `DayMate Weather` | Hourly multi-day forecast (Open-Meteo) | `agent1qgezdge0trk469xalfd6gh20c58hlgalul94lt06p6780r8uqwesv2cqukl` |
+| `DayMate Places` | Real places and opening hours (OpenStreetMap / Nominatim) | `agent1qd8fsd2g3qfacd2ykj3uuh0j5tjun95annsuy7q9fc8eg027x2lgkdlult4` |
+| `DayMate Events` | Events on your dates (allevents.in) | `agent1q2ts9me2vvg4gfv5euqfax6eqrt7jusyulkxjhunwtad9x4599xycs0za6s` |
+
+Hosted agents can't block waiting for another agent, so the orchestrator sends the three requests tagged with a request id,
+keeps the job in Agent Storage and composes the plan when the last answer arrives (a 20-second sweep finishes slow jobs
+with whatever arrived). The same logic (`core.py`) also runs locally as one process (`daymate.py`).
 
 ```
 ASI:One ──ChatMessage / card selection──▶ daymate ──ASI1──▶ intent {city, days, group, budget, interests, lang}
@@ -61,7 +67,8 @@ python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env    # ASI1_API_KEY + random seeds; Stripe TEST keys optional
 python daymate.py --check "Plan my Saturday in Jaipur, I love forts and street food"   # end-to-end self-check
-python daymate.py       # start all four agents
+python daymate.py       # run all four agents locally (mailbox)
+hosted/sync.sh && cd hosted && avctl hosting deploy   # or deploy them to Agentverse
 ```
 
 Open the inspector link from the logs and choose **Connect → Mailbox**, then click **Chat with Agent** in the agent profile.

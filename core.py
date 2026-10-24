@@ -682,6 +682,7 @@ async def handle_chat(ctx: Context, sender: str, msg: ChatMessage, deliver, more
             sel = {"action": "new"}
     action = sel.get("action")
     state = ctx.storage.get(sender) or {}
+    ctx.logger.info(f"chat from {sender[:16]}…: {text[:80]!r} action={action}")
     try:
         if action == "new" or (action in ("swap", "watch", "save", "again", "tweak") and not state):
             text_, card, actions = await welcome(ctx, sender)
@@ -721,16 +722,17 @@ async def handle_chat(ctx: Context, sender: str, msg: ChatMessage, deliver, more
             intent = await parse_intent(str(sel.get("text") or text), state["intent"])
         else:
             intent = await parse_intent(text, state.get("intent"))
+        ctx.logger.info(f"intent={intent}")
         if not intent.get("city"):
             text_, card, actions = await welcome(ctx, sender)
             ctx.storage.set(f"menu:{sender}", actions)
             await ctx.send(sender, message("Which city should I plan for? " + text_.split("\n", 1)[1].lstrip(),
                                            "carousel", card))
             return
-        ctx.logger.info(f"intent={intent}")
         await plan_or_charge(ctx, sender, intent, deliver)
     except Exception:
-        ctx.logger.exception("planning failed")
+        import traceback
+        ctx.logger.error("planning failed: " + traceback.format_exc()[-900:].replace("\n", " | "))
         await ctx.send(sender, message("Something went wrong while planning. Please try again in a moment."))
 
 
