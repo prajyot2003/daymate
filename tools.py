@@ -149,7 +149,8 @@ async def wiki_image(*titles: str) -> str:
     for t in titles:
         if t not in _images:
             try:
-                r = await http.get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(t.replace(' ', '_'))}")
+                r = await http.get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(t.replace(' ', '_'))}",
+                                   headers={"User-Agent": "DayMate/1.0 (https://github.com/prajyot2003/daymate)"})
                 _images[t] = ((r.json().get("thumbnail") or {}).get("source") or "") if r.status_code == 200 else ""
             except (httpx.HTTPError, ValueError):
                 _images[t] = ""
