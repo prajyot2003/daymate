@@ -40,7 +40,7 @@ build a timed plan from **live weather**, **real places** and **events happening
 | `daymate` (orchestrator) | Chat + Payment Protocol, ASI:One entry point. ASI1 parses intent and writes the plan as structured JSON; the orchestrator builds links, travel times, budget and cards | `agent1q27u5s2hueg8u7ecza8p05ce25frp2jnwchh44f0qepscah29ft96262zge` |
 | `daymate-weather` | Hourly multi-day forecast (Open-Meteo) | `agent1q09f447uf8l648cltdqlzd2785mfd9ensc48mwt8twz3jnfc7pwj5z3zkgw` |
 | `daymate-places` | Real places and opening hours (OpenStreetMap / Nominatim) | `agent1qggv7mx7a5dcpllc5lz0nfwtgatzf7f7k2f25f4gc87sg322vp94wwjgray` |
-| `daymate-events` | Events on your dates (allevents.in) | printed at startup |
+| `daymate-events` | Events on your dates (allevents.in) | `agent1qtd6dh08q5dy3s58hjzru53u9tm3h4r2fep7fnyq480xrwrquaye5lhg78x` |
 
 ```
 ASI:One ──ChatMessage / card selection──▶ daymate ──ASI1──▶ intent {city, days, group, budget, interests, lang}
@@ -72,6 +72,7 @@ free and the plan says so. With `sk_test_`/`pk_test_` keys, pay with test card `
 
 ## Links
 
+- GitHub: https://github.com/prajyot2003/daymate
 - ASI:One shared chat: _TODO_
 - Agentverse profile: _TODO_
 - Demo video: _TODO_
