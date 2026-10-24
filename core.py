@@ -38,7 +38,8 @@ from tools import CATEGORIES
 ASI1_API_KEY = os.getenv("ASI1_API_KEY")
 if not ASI1_API_KEY:
     raise RuntimeError("ASI1_API_KEY is not set (local: .env, hosted: Agent Secrets)")
-llm = AsyncOpenAI(base_url="https://api.asi1.ai/v1", api_key=ASI1_API_KEY)
+# Agentverse injects ASI1_API_KEY / ASI1_BASE_URL into hosted agents; locally they come from .env
+llm = AsyncOpenAI(base_url=os.getenv("ASI1_BASE_URL") or "https://api.asi1.ai/v1", api_key=ASI1_API_KEY)
 
 # Pro (multi-day) plans are paid via Stripe when keys are set; without them Pro is unlocked for free.
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")

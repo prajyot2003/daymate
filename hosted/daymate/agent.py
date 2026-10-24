@@ -21,9 +21,15 @@ PARTS = ("weather", "places", "events")
 JOB_TIMEOUT = 60  # seconds before a job is finished with whatever answers arrived
 
 
+# Deployed specialist addresses (avctl left the .env {{ .X.Address }} templates unresolved); env vars override.
+SPECIALISTS = {"weather": "agent1qgezdge0trk469xalfd6gh20c58hlgalul94lt06p6780r8uqwesv2cqukl",
+               "places": "agent1qd8fsd2g3qfacd2ykj3uuh0j5tjun95annsuy7q9fc8eg027x2lgkdlult4",
+               "events": "agent1q2ts9me2vvg4gfv5euqfax6eqrt7jusyulkxjhunwtad9x4599xycs0za6s"}
+
+
 def specialists() -> dict[str, str]:
-    return {"weather": os.environ["WEATHER_ADDRESS"], "places": os.environ["PLACES_ADDRESS"],
-            "events": os.environ["EVENTS_ADDRESS"]}
+    env = {p: os.getenv(f"{p.upper()}_ADDRESS", "") for p in SPECIALISTS}
+    return {p: env[p] if env[p].startswith("agent1") else addr for p, addr in SPECIALISTS.items()}
 
 
 async def deliver(ctx: Context, sender: str, intent: dict, note: str):

@@ -1,0 +1,6 @@
+[project]
+name = "daymate"
+version = "1.0.0"
+description = "Plans your day in any Indian city from one sentence: live weather, real places, events, navigation, calendar and cab links. Multi-agent, with interactive cards and Pro payments."
+requires-python = ">=3.10"
+dependencies = ["uagents", "openai"]

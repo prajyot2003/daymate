@@ -1,0 +1,6 @@
+[project]
+name = "places"
+version = "1.0.0"
+description = "DayMate specialist: real places and opening hours from OpenStreetMap for trip planning."
+requires-python = ">=3.10"
+dependencies = ["uagents", "openai"]

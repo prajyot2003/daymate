@@ -1,0 +1,6 @@
+[project]
+name = "weather"
+version = "1.0.0"
+description = "DayMate specialist: hourly multi-day weather forecasts (Open-Meteo) for trip planning."
+requires-python = ">=3.10"
+dependencies = ["uagents", "openai"]
