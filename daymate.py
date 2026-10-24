@@ -353,8 +353,9 @@ def find_target(state: dict, sel: dict, text: str) -> int | None:
     return next((n for n, _, s in stops if cat[s["id"]]["category"] == want), None)
 
 
-def swap_stop(state: dict, n: int, new_cat: str | None) -> tuple[dict, dict] | None:
-    """Replace stop n with the nearest unused catalogue entry of new_cat (or the same category)."""
+def swap_stop(state: dict, n: int, new_cat: str | None, exact: bool = False) -> tuple[dict, dict] | None:
+    """Replace stop n with the nearest unused catalogue entry of new_cat (or the same category).
+    Unless exact, falls back to anything of the same kind (food vs sight)."""
     stops = numbered(state)
     if not 1 <= n <= len(stops):
         return None
@@ -364,8 +365,8 @@ def swap_stop(state: dict, n: int, new_cat: str | None) -> tuple[dict, dict] | N
     want = new_cat or old["category"]
     used = {s["id"] for _, _, s in stops}
     pool = [c for c in state["catalogue"] if c["id"] not in used and c["category"] == want]
-    if not pool and not new_cat:  # fall back to anything of the same kind (food vs sight)
-        pool = [c for c in state["catalogue"] if c["id"] not in used and (c["category"] in FOOD) == (old["category"] in FOOD)]
+    if not pool and not exact:
+        pool = [c for c in state["catalogue"] if c["id"] not in used and (c["category"] in FOOD) == (want in FOOD)]
     if not pool:
         return None
     new = min(pool, key=lambda c: (c["lat"] - old["lat"]) ** 2 + (c["lon"] - old["lon"]) ** 2)
@@ -496,22 +497,30 @@ async def do_swap(ctx: Context, sender: str, state: dict, sel: dict, text: str):
         await ctx.send(sender, message("Which stop should I swap? Reply e.g. **swap 3**."))
         return
     new_cat = category_in(text.lower().split(" with ", 1)[1]) if " with " in text.lower() else None
-    result = swap_stop(state, n, new_cat)
-    if result is None and new_cat and new_cat != "event":
-        # nothing suitable yet: ask the places agent for more of that category
-        geo = state["geo"]
+    result = swap_stop(state, n, new_cat, exact=True)
+    if result is None and new_cat != "event":
+        # nothing unused of that category yet: ask the places agent for a deeper search
+        geo, cat_ = state["geo"], new_cat or {c["id"]: c for c in state["catalogue"]}[numbered(state)[n - 1][2]["id"]]["category"]
         p, _ = await ctx.send_and_receive(places_agent.address, PlacesRequest(
-            city=geo["name"], lat=geo["latitude"], lon=geo["longitude"], categories=[new_cat]), PlacesReport, timeout=30)
+            city=geo["name"], lat=geo["latitude"], lon=geo["longitude"], per_cat=15,
+            categories=[cat_] + sorted(FOOD - {cat_}) if cat_ in FOOD else [cat_]),
+            PlacesReport, timeout=30)
         known = {c["name"].lower() for c in state["catalogue"]}
         for c in (p.places if p and p.ok else []):
             if c["name"].lower() not in known:
                 state["catalogue"].append({**c, "id": f"p{len(state['catalogue']) + 1}"})
         result = swap_stop(state, n, new_cat)
     if result is None:
-        await ctx.send(sender, message(f"I don't have another option for stop {n} right now. Try *swap {n} with a museum*."))
+        used = {s["id"] for _, _, s in numbered(state)}
+        left = sorted({c["category"].replace("_", " ") for c in state["catalogue"] if c["id"] not in used})
+        await ctx.send(sender, message(f"I couldn't find another {(new_cat or 'option').replace('_', ' ')} in "
+                                       f"{state['geo']['name']} for stop {n}."
+                                       + (f" I still have unused: {', '.join(left)}. Try *swap {n} with a {left[0]}*." if left else "")))
         return
     old, new = result
-    text_md, card = await render(state, f"🔁 Swapped **{old['name']}** → **{new['name']}**")
+    picked = "" if not new_cat or new["category"] == new_cat else \
+        f" (no other {new_cat.replace('_', ' ')} found nearby, so I picked a {new['category'].replace('_', ' ')})"
+    text_md, card = await render(state, f"🔁 Swapped **{old['name']}** → **{new['name']}**{picked}")
     ctx.storage.set(sender, state)
     await ctx.send(sender, message(text_md, "custom", card))
 

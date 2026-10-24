@@ -72,7 +72,7 @@ async def fetch_places(city: str, lat: float, lon: float, categories: list[str],
             await asyncio.sleep(1.1)
         try:
             r = await http.get("https://nominatim.openstreetmap.org/search", params={
-                "q": f"{CATEGORIES[cat]} in {city}", "format": "jsonv2", "limit": 12, "extratags": 1,
+                "q": f"{CATEGORIES[cat]} in {city}", "format": "jsonv2", "limit": max(12, per_cat * 2), "extratags": 1,
                 "viewbox": box, "bounded": 1, "accept-language": "en"})
             r.raise_for_status()
         except httpx.HTTPError:
