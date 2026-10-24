@@ -19,7 +19,7 @@ from urllib.parse import quote
 import httpx
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
-from uagents import Agent, Bureau, Context, Model, Protocol
+from uagents import Agent, Context, Model, Protocol
 from uagents_core.contrib.protocols.chat import (
     ChatAcknowledgement,
     ChatMessage,
@@ -176,10 +176,12 @@ async def compose_plan(intent: dict, place: dict, weather: str | None, places: l
 
 # ---------- agents ----------
 
-orchestrator = Agent(name="daymate", seed=os.environ["ORCHESTRATOR_SEED"], mailbox=True,
+# Separate ports so the Agentverse inspector on :8001 sees only the orchestrator;
+# same process, so agent-to-agent messages are delivered in memory.
+orchestrator = Agent(name="daymate", seed=os.environ["ORCHESTRATOR_SEED"], port=8001, mailbox=True,
                      publish_agent_details=True)
-weather_agent = Agent(name="daymate-weather", seed=os.environ["WEATHER_SEED"])
-places_agent = Agent(name="daymate-places", seed=os.environ["PLACES_SEED"])
+weather_agent = Agent(name="daymate-weather", seed=os.environ["WEATHER_SEED"], port=8002)
+places_agent = Agent(name="daymate-places", seed=os.environ["PLACES_SEED"], port=8003)
 
 
 @weather_agent.on_message(WeatherRequest, replies=WeatherReport)
@@ -267,8 +269,8 @@ if __name__ == "__main__":
     if sys.argv[1:2] == ["--check"]:
         asyncio.run(check(" ".join(sys.argv[2:]) or "Plan my Saturday in Jaipur, I love forts and street food"))
     else:
-        bureau = Bureau(port=8001)
-        for a in (orchestrator, weather_agent, places_agent):
-            bureau.add(a)
-        print(f"Orchestrator address: {orchestrator.address}")
-        bureau.run()
+        print(f"Inspector: https://agentverse.ai/inspect/?uri=http%3A//127.0.0.1%3A8001&address={orchestrator.address}")
+
+        # agents bind to the loop that existed when they were created, so reuse it
+        orchestrator._loop.run_until_complete(asyncio.gather(
+            orchestrator.run_async(), weather_agent.run_async(), places_agent.run_async()))
