@@ -2,4 +2,3 @@ uagents==0.25.5
 openai
 python-dotenv
 httpx
-stripe

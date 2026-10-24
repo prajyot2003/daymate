@@ -3,3 +3,9 @@
 __pycache__/
 *.json
 *.pdf
+hosted/*/core.py
+hosted/*/tools.py
+hosted/*/messages.py
+hosted/*/answers.py
+.avctl/
+hosted/.avctl/
