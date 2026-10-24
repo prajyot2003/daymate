@@ -615,7 +615,8 @@ async def deliver_plan(ctx: Context, sender: str, intent: dict, note: str = ""):
 
 def create_checkout(sender: str, intent: dict) -> dict:
     session = stripe.checkout.Session.create(
-        ui_mode="embedded", redirect_on_completion="if_required", payment_method_types=["card"], mode="payment",
+        # current Stripe API: "embedded_page" (formerly "embedded"); payment methods come from the dashboard
+        ui_mode="embedded_page", redirect_on_completion="if_required", mode="payment",
         return_url="https://agentverse.ai/payment-success?session_id={CHECKOUT_SESSION_ID}",
         line_items=[{"quantity": 1, "price_data": {"currency": PRO_CURRENCY, "unit_amount": PRO_PRICE * 100,
                      "product_data": {"name": f"DayMate Pro · {intent['days']}-day trip to {intent['city']}"}}}],
