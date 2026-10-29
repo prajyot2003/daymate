@@ -2,6 +2,10 @@
 
 ![tag:innovationlab](https://img.shields.io/badge/innovationlab-3D8BD3)
 ![tag:hackathon](https://img.shields.io/badge/hackathon-5F43F1)
+![Winner: Best Personal AI](https://img.shields.io/badge/🏆_Fetch--A--Thon_3.0-Best_Personal_AI-FFC24B)
+
+> 🏆 **Winner – Best Personal AI, Fetch-A-Thon 3.0** (Fetch.ai Innovation Lab × ASI:One, October 2026)
+> Team HolySpirits · Team ID `fetchathon3.0-1556`
 
 Tell DayMate *"Plan my Saturday in Jaipur, I love forts and street food"*, or fill in its form card, and four agents
 build a timed plan from **live weather**, **real places** and **events happening that day**. Every stop comes with
